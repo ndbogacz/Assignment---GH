@@ -1,0 +1,102 @@
+---
+title: "MLWriteup"
+author: "Mike Bogacz"
+date: "Saturday, May 23, 2015"
+output: html_document
+---
+
+## Executive Summary
+
+The following document contains the details of the construction of a model to predict the exercise type for a given measurement from an excercise-tracking device.  I will detail the process of getting the data into a workable set, as well as the process of fitting multiple models and comparing the results.  In the end, I was able to construct a boosting model that returned the correct result over 99% of the time in the training set, and for all 20 entries in the testing set.
+
+## Dataset
+
+Before constructing a model, I needed to take the base dataset, and put it in a tidy format that would work with the machine learning techniques covered in class.
+
+### Removing Columns
+
+I first loaded the data into R, and treated the blank values in some of the items as NAs.  I did this because every column with blank values only had readings when "New_Window" was equal to "Yes", which meant that these columns were effectively the same as the columns that contained NAs.
+
+```
+train <- read.csv("pml-training.csv",row.names="X",na.strings=c("","NA"))
+```
+After exploring the data, I determined that I would eliminate all columns with NAs.  As mentioned earlier, these columns only had values when "New_Window" was equal to "Yes," which would mean using a much smaller amount of data if we were to limit the set to just these rows.  Additionally, the test set did not have any rows with these values populated, so keeping them in would not have helped my final model.  I also eliminated the columns referring to the window, since they added no information once I eliminated the other rows.  Finally, I eliminated the "cvtdtimestamp" column as we already have that data in a more usable format in the "rawtimestamp" column.
+
+```
+train2 <- train[, colSums(is.na(train)) == 0]
+train3 <- train2[,c(1:3,7:59)]
+```
+ 
+### Creating Dummy Variables
+
+At this point, I was left with many useful variables.  While most were in a numerical format, the "user_name" variable was not.  In order to be able to use this to build a model, I had to convert them into dummy variables, as such:
+
+```
+train3$classe <- as.factor(train3$classe)
+train3$user_name <- as.factor(train3$user_name)
+dummies <- dummyVars(classe~user_name,data=train3)
+train4 <- cbind(predict(dummies,newdata=train3),train3[,2:56])
+```
+
+### Applying Changes to Test Data
+
+In order for the predictions to work, I had to also apply these changes to the test data:
+
+```
+test <- read.csv("pml-training.csv",row.names="X",na.strings=c("","NA"))
+test2 <- test[, colSums(is.na(test)) == 0]
+test3 <- test2[,c(1:3,7:59)]
+train3$user_name <- as.factor(train3$user_name)
+dummies <- dummyVars(problem_id~user_name,data=test3)
+test4 <- cbind(predict(dummies,newdata=test3),test3[,2:56])
+```
+
+## Model Creation
+
+Since I was now working with 60 predictors, I wanted to attempt a basic principal component analysis to determine if I could construct a good model with fewer variables.  As an increased number of variables can lead to lengthy processing times, I was hoping to simplify things as much as possible.  I used a threshold of 80%, which gave me 12 variables.
+
+```
+preProc <- preProcess(train4[,-61],method="pca",thresh=0.8)
+classe <- train4$classe
+trainPCA <- cbind(predict(preProc,train4[,-61]),classe)
+```
+I then attempted both a Decision Tree and Boosting model with both the full set of data and the PCA variables.
+
+```
+Model Accuracy on Training Set
+Trees, PCA: 0.369
+Trees, non-PCA: 0.502
+Boostng, PCA: 0.738
+Boosting, non-PCA: 0.994
+```
+
+With both model constructions, the full set of variables produced a significantly better result on the training set.  Additionally, boosting acheived much better results as well, making the increased model-building time worth it.  The confusion matrix of the results was as follows:
+
+```
+Confusion Matrix and Statistics
+
+          Reference
+Prediction    A    B    C    D    E
+         A 5576    7    0    0    0
+         B    4 3785    5    0    0
+         C    0    5 3404    3    2
+         D    0    0   13 3202    1
+         E    0    0    0   11 3604
+
+Overall Statistics
+                                          
+               Accuracy : 0.9974          
+                 95% CI : (0.9966, 0.9981)
+    No Information Rate : 0.2844          
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.9967          
+ Mcnemar's Test P-Value : NA  
+```
+
+The model fits across all the different classifications, with no apparent bias.  When I submitted the results for the 20 test examples, all 20 returned correctly, which suggests that the model works well in general.
+
+```
+predict(modFit,test4[,-61])
+ [1] B A B A A E D B A A B C B A E E A B B B
+```
